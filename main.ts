@@ -89,9 +89,14 @@ writeFileSync(join(out, 'dossier.json'), buildDossier(out, { text_max_bytes: TEX
 
 const multiples = categoryMultiples(snapshot);
 const top = [...multiples.byCategory.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5);
+const heaviestCategory = radar.category_summaries[0];
+const heaviestChain = radar.chain_summaries[0];
+const sharpestRise = radar.movers.gainers[0];
 process.stdout.write(
   `northstar: ${snapshot.protocols.length} protocols, ${snapshot.watchlist.length} on the watchlist, ${board.length} rows scored (${radar.early_size} early, ${radar.live_size} live set aside)\n` +
     `northstar: global market multiple ${radar.global_multiple}; top category multiples: ${top.map(([k, v]) => `${k} ${v.toFixed(3)}`).join(', ')}\n` +
     `northstar: top 5: ${board.slice(0, 5).map((r) => `#${r.rank} ${r.slug} $${r.implied_value_usd.toLocaleString('en-US')}`).join(', ')}\n` +
+    `northstar: ${radar.category_summaries.length} categories; heaviest ${heaviestCategory === undefined ? 'none' : `${heaviestCategory.category} ($${heaviestCategory.total_tvl_usd.toLocaleString('en-US')} TVL, top ${heaviestCategory.top_name})`}; sharpest weekly rise ${sharpestRise === undefined ? 'none' : `${sharpestRise.name} ${sharpestRise.change_7d.toFixed(2)}%`}\n` +
+    `northstar: heaviest chain ${heaviestChain === undefined ? 'none' : `${heaviestChain.chain} ($${heaviestChain.total_tvl_usd.toLocaleString('en-US')} TVL across ${heaviestChain.rows} rows, top ${heaviestChain.top_name})`}\n` +
     `northstar: wrote ${join(out, 'board.json')}, ${join(out, 'data.js')}, ${join(out, 'dashboard')} (3 files), ${join(out, 'screenshots')} (${shots.length} images) and ${join(out, 'dossier.json')}\n`,
 );
