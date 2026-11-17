@@ -220,6 +220,7 @@
       el('div', { class: 'field' }, el('label', { for: 'category', text: 'Category' }), select),
       el('div', { class: 'field' }, el('label', { for: 'chain', text: 'Chain' }), chainSelect),
       el('div', { class: 'field' }, el('span', { class: 'sub', text: 'Board' }), el('div', { class: 'tabs' }, tabButton('board', 'All'), tabButton('watchlist', 'Watchlist'), tabButton('early', 'Early'), tabButton('live', 'Live token'))),
+      el('button', { class: 'button csv', type: 'button', text: 'Download CSV', onclick: function () { downloadCsv(); } }),
       el('span', { class: 'count', text: state.tab === 'live' ? DATA.live.length + ' live-token protocols' : rows().length + ' rows shown' })
     );
   }
@@ -383,6 +384,129 @@
     }
   }
 
+  // Where the board's weight sits: one digest row per category, heaviest first.
+  function categoryDigest() {
+    var digests = DATA.category_summaries || [];
+    if (digests.length === 0) return null;
+    var tbody = el('tbody');
+    digests.forEach(function (d) {
+      tbody.appendChild(el('tr', null,
+        el('td', null, el('b', { text: d.category })),
+        el('td', { class: 'num', text: String(d.rows) }),
+        el('td', { class: 'num', text: fmtUsd(d.total_tvl_usd) }),
+        el('td', { class: 'num', text: fmtMult(d.median_multiple) }),
+        el('td', null, el('div', { class: 'name' },
+          el('b', { text: d.top_name }),
+          el('span', { class: 'sub', text: fmtUsd(d.top_implied_usd) + ' implied' })
+        ))
+      ));
+    });
+    return el('section', { class: 'panel digest' },
+      el('h2', { text: 'Where the board sits, by category' }),
+      el('p', { class: 'sub', text: 'Each category\u2019s rows, summed TVL, median multiple and strongest protocol. The heaviest category holds the most TVL on the board, not the most rows.' }),
+      el('div', { class: 'table-wrap' },
+        el('table', null,
+          el('thead', null, el('tr', null,
+            el('th', { scope: 'col', text: 'Category' }),
+            el('th', { scope: 'col', text: 'Rows' }),
+            el('th', { scope: 'col', text: 'Total TVL' }),
+            el('th', { scope: 'col', text: 'Median multiple' }),
+            el('th', { scope: 'col', text: 'Strongest protocol' })
+          )),
+          tbody
+        )
+      )
+    );
+  }
+
+  // The week's sharpest moves, ten up and ten down, from the board's own seven-day figures.
+  function moversList(title, movers, cls) {
+    var list = el('ol', { class: 'movers-list' });
+    movers.forEach(function (m) {
+      list.appendChild(el('li', null,
+        el('button', { type: 'button', onclick: function () { openDetail(m.slug); } },
+          el('span', { class: 'mover-name', text: m.name }),
+          el('span', { class: 'sub', text: (m.category || 'Other') + ' · rank ' + m.rank }),
+          el('b', { class: 'num ' + cls, text: fmtPct(m.change_7d) })
+        )
+      ));
+    });
+    return el('div', { class: 'movers-col' }, el('h3', { text: title }), list);
+  }
+
+  function moversPanel() {
+    var movers = DATA.movers;
+    if (!movers || (!movers.gainers.length && !movers.losers.length)) return null;
+    return el('section', { class: 'panel movers' },
+      el('h2', { text: 'Sharpest weekly moves' }),
+      el('p', { class: 'sub', text: 'The ten biggest seven-day rises and falls among the board\u2019s protocols. Select one to see its model and farm plan.' }),
+      el('div', { class: 'movers-grid' },
+        moversList('Rising fastest', movers.gainers, 'pos'),
+        moversList('Falling fastest', movers.losers, 'neg')
+      )
+    );
+  }
+
+  // The filtered, sorted board as a CSV file, for a spreadsheet: one row per protocol shown.
+  function csvCell(v) {
+    var s = v === null || v === undefined ? '' : String(v);
+    return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+  }
+  function downloadCsv() {
+    var list = sortedRows(rows());
+    var head = ['rank', 'protocol', 'category', 'chains', 'tvl_usd', 'change_7d_pct', 'age_days', 'readiness', 'implied_value_usd', 'board'];
+    var lines = [head.join(',')];
+    list.forEach(function (r) {
+      lines.push([
+        r.rank, r.name, r.category || 'Other', (r.chains || []).join(' '), r.tvl_usd,
+        r.change_7d === null ? '' : r.change_7d, r.age_days === null ? '' : r.age_days,
+        r.readiness, r.implied_value_usd, r.on_watchlist ? 'watchlist' : 'early'
+      ].map(csvCell).join(','));
+    });
+    var blob = new Blob([lines.join('\n') + '\n'], { type: 'text/csv' });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = 'northstar-board.csv';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+
+  // Where the board lives: one digest row per chain, heaviest first.
+  function chainDigest() {
+    var digests = DATA.chain_summaries || [];
+    if (digests.length === 0) return null;
+    var tbody = el('tbody');
+    digests.forEach(function (d) {
+      tbody.appendChild(el('tr', null,
+        el('td', null, el('b', { text: d.chain })),
+        el('td', { class: 'num', text: String(d.rows) }),
+        el('td', { class: 'num', text: fmtUsd(d.total_tvl_usd) }),
+        el('td', null, el('div', { class: 'name' },
+          el('b', { text: d.top_name }),
+          el('span', { class: 'sub', text: fmtUsd(d.top_implied_usd) + ' implied' })
+        ))
+      ));
+    });
+    return el('section', { class: 'panel chain-digest' },
+      el('h2', { text: 'Where the board lives, by chain' }),
+      el('p', { class: 'sub', text: 'Each chain\u2019s rows, summed TVL and strongest protocol. A protocol on several chains is filed under the first chain it names, so the rows add up to the board.' }),
+      el('div', { class: 'table-wrap' },
+        el('table', null,
+          el('thead', null, el('tr', null,
+            el('th', { scope: 'col', text: 'Chain' }),
+            el('th', { scope: 'col', text: 'Rows' }),
+            el('th', { scope: 'col', text: 'Total TVL' }),
+            el('th', { scope: 'col', text: 'Strongest protocol' })
+          )),
+          tbody
+        )
+      )
+    );
+  }
+
   function render() {
     app.textContent = '';
     var shell = el('div', { class: 'shell' });
@@ -390,7 +514,15 @@
     shell.appendChild(lede());
     shell.appendChild(controls());
     shell.appendChild(state.tab === 'live' ? liveTable() : boardTable());
-    if (state.tab !== 'live') shell.appendChild(modelPanel());
+    if (state.tab !== 'live') {
+      shell.appendChild(modelPanel());
+      var digest = categoryDigest();
+      if (digest) shell.appendChild(digest);
+      var chains = chainDigest();
+      if (chains) shell.appendChild(chains);
+      var movers = moversPanel();
+      if (movers) shell.appendChild(movers);
+    }
     app.appendChild(shell);
     app.setAttribute('aria-busy', 'false');
     if (!dialog.isConnected) app.appendChild(dialog);
