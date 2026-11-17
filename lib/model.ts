@@ -166,6 +166,47 @@ export interface RadarData {
   live_size: number;
   rows: RadarRow[];
   live: LiveRow[];
+  category_summaries: CategorySummary[];
+  chain_summaries: ChainSummary[];
+  movers: Movers;
+}
+
+/** One category's slice of the board: how many rows it holds, how much TVL, and its best row. */
+export interface CategorySummary {
+  category: string;
+  rows: number;
+  total_tvl_usd: number;
+  median_multiple: number;
+  top_slug: string;
+  top_name: string;
+  top_implied_usd: number;
+}
+
+/** One row in a movers list: the protocol and the week's move that put it there. */
+export interface MoverRow {
+  slug: string;
+  name: string;
+  category: string;
+  change_7d: number;
+  tvl_usd: number;
+  implied_value_usd: number;
+  rank: number;
+}
+
+/** The week's biggest gainers and losers, ten each, drawn from the board's rows. */
+export interface Movers {
+  gainers: MoverRow[];
+  losers: MoverRow[];
+}
+
+/** One chain's slice of the board: the rows that name it first, their TVL, and the best row. */
+export interface ChainSummary {
+  chain: string;
+  rows: number;
+  total_tvl_usd: number;
+  top_slug: string;
+  top_name: string;
+  top_implied_usd: number;
 }
 
 /** Why the snapshot is not one this model can score. */
@@ -502,6 +543,9 @@ export function buildRadar(snapshot: Snapshot, model: ModelConstants = MODEL): {
   const live = liveRows(snapshot);
   const watchlist = new Set(snapshot.watchlist);
   const early = board.filter((r) => !watchlist.has(r.slug)).length;
+  const summaries = categorySummary(board);
+  const chainSummaries = chainSummary(board);
+  const movers = topMovers(board);
   const categoryMultiplesOut: Record<string, number> = {};
   for (const [k, v] of [...multiples.byCategory.entries()].sort((a, b) => b[1] - a[1])) categoryMultiplesOut[k] = round4(v);
   const radar: RadarData = {
@@ -519,8 +563,97 @@ export function buildRadar(snapshot: Snapshot, model: ModelConstants = MODEL): {
     live_size: live.length,
     rows: board.map((r) => radarRow(r, watchlist)),
     live,
+    category_summaries: summaries,
+    chain_summaries: chainSummaries,
+    movers,
   };
   return { board, radar };
+}
+
+/**
+ * A per-category digest of the board: row count, summed TVL, the median of the rows'
+ * category multiples, and the category's strongest row by implied value. Categories come
+ * from the board itself, with a missing one filed under 'Other'; the digest is ordered by
+ * total TVL, heaviest first, so a reader sees at a glance where the board's weight sits.
+ */
+export function categorySummary(board: BoardRow[]): CategorySummary[] {
+  const byCategory = new Map<string, BoardRow[]>();
+  for (const row of board) {
+    const key = row.category ?? 'Other';
+    const list = byCategory.get(key);
+    if (list === undefined) byCategory.set(key, [row]);
+    else list.push(row);
+  }
+  const summaries: CategorySummary[] = [];
+  for (const [category, rows] of byCategory) {
+    const multiples = rows.map((r) => r.model.category_multiple).sort((a, b) => a - b);
+    const mid = Math.floor(multiples.length / 2);
+    const medianMultiple = multiples.length % 2 === 1 ? multiples[mid]! : (multiples[mid - 1]! + multiples[mid]!) / 2;
+    let top = rows[0]!;
+    for (const row of rows) if (row.implied_value_usd > top.implied_value_usd) top = row;
+    summaries.push({
+      category,
+      rows: rows.length,
+      total_tvl_usd: rows.reduce((sum, r) => sum + r.tvl_usd, 0),
+      median_multiple: medianMultiple,
+      top_slug: top.slug,
+      top_name: top.name,
+      top_implied_usd: top.implied_value_usd,
+    });
+  }
+  summaries.sort((a, b) => b.total_tvl_usd - a.total_tvl_usd || (a.category < b.category ? -1 : a.category > b.category ? 1 : 0));
+  return summaries;
+}
+
+/**
+ * The board's ten sharpest weekly rises and ten sharpest falls, by change_7d. A row with
+ * no seven-day figure is left out: a move the snapshot never measured is not a mover.
+ */
+export function topMovers(board: BoardRow[]): Movers {
+  const measured = board.filter((r) => r.change_7d !== null);
+  const toMover = (r: BoardRow): MoverRow => ({
+    slug: r.slug,
+    name: r.name,
+    category: r.category ?? 'Other',
+    change_7d: r.change_7d!,
+    tvl_usd: r.tvl_usd,
+    implied_value_usd: r.implied_value_usd,
+    rank: r.rank,
+  });
+  const gainers = [...measured].sort((a, b) => (b.change_7d ?? 0) - (a.change_7d ?? 0)).slice(0, 10).map(toMover);
+  const losers = [...measured].sort((a, b) => (a.change_7d ?? 0) - (b.change_7d ?? 0)).slice(0, 10).map(toMover);
+  return { gainers, losers };
+}
+
+/**
+ * A per-chain digest of the board: row count, summed TVL, and the chain's strongest row
+ * by implied value. A protocol that runs on several chains is filed under the first chain
+ * it names, so every row is counted once and the digest adds up to the board. The digest
+ * is ordered by total TVL, heaviest first, which shows which chain carries the board.
+ */
+export function chainSummary(board: BoardRow[]): ChainSummary[] {
+  const byChain = new Map<string, BoardRow[]>();
+  for (const row of board) {
+    const key = row.chains.length > 0 ? row.chains[0]! : 'Unnamed chain';
+    const list = byChain.get(key);
+    if (list === undefined) byChain.set(key, [row]);
+    else list.push(row);
+  }
+  const summaries: ChainSummary[] = [];
+  for (const [chain, rows] of byChain) {
+    let top = rows[0]!;
+    for (const row of rows) if (row.implied_value_usd > top.implied_value_usd) top = row;
+    summaries.push({
+      chain,
+      rows: rows.length,
+      total_tvl_usd: rows.reduce((sum, r) => sum + r.tvl_usd, 0),
+      top_slug: top.slug,
+      top_name: top.name,
+      top_implied_usd: top.implied_value_usd,
+    });
+  }
+  summaries.sort((a, b) => b.total_tvl_usd - a.total_tvl_usd || (a.chain < b.chain ? -1 : a.chain > b.chain ? 1 : 0));
+  return summaries;
 }
 
 /** The snapshot out of a file's text, refused unless it is the shape the model scores. */
